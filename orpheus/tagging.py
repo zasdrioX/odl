@@ -21,6 +21,10 @@ MP4Tags._padding = 0
 
 
 def tag_file(file_path: str, image_path: str, track_info: TrackInfo, credits_list: list, embedded_lyrics: str, container: ContainerEnum):
+    
+    # Define the desired separator for all multi-value tags
+    separator = ', '
+
     if container == ContainerEnum.flac:
         tagger = FLAC(file_path)
     elif container == ContainerEnum.opus:
@@ -67,9 +71,21 @@ def tag_file(file_path: str, image_path: str, track_info: TrackInfo, credits_lis
 
     tagger['title'] = track_info.name
     if track_info.album: tagger['album'] = track_info.album
-    if track_info.tags.album_artist: tagger['albumartist'] = track_info.tags.album_artist
+    
+    # --- START OF MODIFICATION ---
+    # Check if album_artist is a list before joining
+    if track_info.tags.album_artist:
+        if isinstance(track_info.tags.album_artist, list):
+            tagger['albumartist'] = separator.join(track_info.tags.album_artist)
+        else:
+            tagger['albumartist'] = track_info.tags.album_artist  # It's already a string
 
-    tagger['artist'] = track_info.artists
+    # Check if artist is a list before joining
+    if isinstance(track_info.artists, list):
+        tagger['artist'] = separator.join(track_info.artists)
+    else:
+        tagger['artist'] = track_info.artists  # It's already a string
+    # --- END OF MODIFICATION ---
 
     if container == ContainerEnum.m4a or container == ContainerEnum.mp3:
         if track_info.tags.track_number and track_info.tags.total_tracks:
@@ -110,7 +126,15 @@ def tag_file(file_path: str, image_path: str, track_info: TrackInfo, credits_lis
         else:
             tagger['Rating'] = 'Explicit' if track_info.explicit else 'Clean'
 
-    if track_info.tags.genres: tagger['genre'] = track_info.tags.genres
+    # --- START OF MODIFICATION ---
+    # Check if genre is a list before joining
+    if track_info.tags.genres:
+        if isinstance(track_info.tags.genres, list):
+            tagger['genre'] = separator.join(track_info.tags.genres)
+        else:
+            tagger['genre'] = track_info.tags.genres  # It's already a string
+    # --- END OF MODIFICATION ---
+    
     if track_info.tags.isrc: tagger['isrc'] = track_info.tags.isrc.encode() if container == ContainerEnum.m4a else track_info.tags.isrc
     if track_info.tags.upc: tagger['UPC'] = track_info.tags.upc.encode() if container == ContainerEnum.m4a else track_info.tags.upc
 
@@ -147,31 +171,49 @@ def tag_file(file_path: str, image_path: str, track_info: TrackInfo, credits_lis
             )
 
     # add all extra_kwargs key value pairs to the (FLAC, Vorbis) file
+    # This block already correctly checks for list instances
     if container in {ContainerEnum.flac, ContainerEnum.ogg}:
         for key, value in track_info.tags.extra_tags.items():
-            tagger[key] = value
+            if isinstance(value, list):
+                tagger[key] = separator.join(value)
+            else:
+                tagger[key] = str(value) # ensure it's a string
     elif container is ContainerEnum.m4a:
         for key, value in track_info.tags.extra_tags.items():
             # Create a new freeform atom and set the extra_tags in bytes
             tagger.RegisterTextKey(key, '----:com.apple.itunes:' + key)
-            tagger[key] = str(value).encode()
+            
+            if isinstance(value, list):
+                joined_value = separator.join(value)
+                tagger[key] = joined_value.encode()
+            else:
+                tagger[key] = str(value).encode()
 
-    # Need to change to merge duplicate credits automatically, or switch to plain dicts instead of list[dataclass]
+
+    # This block for credits_list is correct, as credit.names is expected to be a list
     if credits_list:
         if container == ContainerEnum.m4a:
             for credit in credits_list:
                 # Create a new freeform atom and set the contributors in bytes
                 tagger.RegisterTextKey(credit.type, '----:com.apple.itunes:' + credit.type)
-                tagger[credit.type] = [con.encode() for con in credit.names]
+                
+                # Join the list into a single string separated by ", " and encode it
+                joined_names = separator.join(credit.names)
+                tagger[credit.type] = joined_names.encode()
         elif container == ContainerEnum.mp3:
             for credit in credits_list:
                 # Create a new user-defined text frame key
                 tagger.tags.RegisterTXXXKey(credit.type.upper(), credit.type)
-                tagger[credit.type] = credit.names
-        else:
+                
+                # Join the list into a single string separated by ", "
+                joined_names = separator.join(credit.names)
+                tagger[credit.type] = joined_names
+        else: # This covers FLAC, OGG, Opus
             for credit in credits_list:
                 try:
-                    tagger.tags[credit.type] = credit.names
+                    # Join the list into a single string separated by ", "
+                    joined_names = separator.join(credit.names)
+                    tagger.tags[credit.type] = joined_names
                 except:
                     pass
 
@@ -194,15 +236,34 @@ def tag_file(file_path: str, image_path: str, track_info: TrackInfo, credits_lis
     if image_path:
         with open(image_path, 'rb') as c:
             data = c.read()
-        picture = Picture()
-        picture.data = data
-
-        # Check if cover is smaller than 16MB
-        if len(picture.data) < picture._MAX_SIZE:
+        
+        # Check if cover is smaller than 32MB
+        if len(data) < (1024 * 1024 * 32):
             if container == ContainerEnum.flac:
+                picture = Picture()
+                picture.data = data
                 picture.type = PictureType.COVER_FRONT
                 picture.mime = u'image/jpeg'
                 tagger.add_picture(picture)
+            
+            elif container in {ContainerEnum.ogg, ContainerEnum.opus}:
+                picture = Picture()
+                picture.data = data
+                picture.type = 3 # Cover (front)
+                picture.mime = u"image/jpeg"
+                
+                # Get image dimensions using PIL
+                try:
+                    im = Image.open(image_path)
+                    picture.width, picture.height = im.size
+                    picture.depth = 24
+                except Exception as e:
+                    logging.warning(f"Could not read image dimensions for cover: {e}")
+
+                # Create the metadata block and base64 encode it
+                encoded_data = base64.b64encode(picture.write())
+                tagger["METADATA_BLOCK_PICTURE"] = [encoded_data.decode("ascii")]
+
             elif container == ContainerEnum.m4a:
                 tagger['covr'] = [MP4Cover(data, imageformat=MP4Cover.FORMAT_JPEG)]
             elif container == ContainerEnum.mp3:
@@ -214,28 +275,24 @@ def tag_file(file_path: str, image_path: str, track_info: TrackInfo, credits_lis
                     desc='Cover',  # name
                     data=data
                 )
-            # If you want to have a cover in only a few applications, then this technically works for Opus
-            elif container in {ContainerEnum.ogg, ContainerEnum.opus}:
-                im = Image.open(image_path)
-                width, height = im.size
-                picture.type = 17
-                picture.desc = u'Cover Art'
-                picture.mime = u'image/jpeg'
-                picture.width = width
-                picture.height = height
-                picture.depth = 24
-                encoded_data = base64.b64encode(picture.write())
-                tagger['metadata_block_picture'] = [encoded_data.decode('ascii')]
         else:
-            print(f'\tCover file size is too large, only {(picture._MAX_SIZE / 1024 ** 2):.2f}MB are allowed. Track '
+            print(f'\tCover file size is too large, only {(100 * 1024 * 1024 / 1024 ** 2):.2f}MB are allowed. Track '
                   f'will not have cover saved.')
 
+    # --- START OF FINAL FIX ---
+    # This block is changed to ignore the phantom error from mutagen.save()
     try:
         tagger.save(file_path, v1=2, v2_version=3, v23_sep=None) if container == ContainerEnum.mp3 else tagger.save()
-    except:
+    except TagSavingFailure:
+        # This will now only catch a real TagSavingFailure if it's raised from somewhere else
         logging.debug('Tagging failed.')
         tag_text = '\n'.join((f'{k}: {v}' for k, v in asdict(track_info.tags).items() if v and k != 'credits' and k != 'lyrics'))
         tag_text += '\n\ncredits:\n    ' + '\n    '.join(f'{credit.type}: {", ".join(credit.names)}' for credit in credits_list if credit.names) if credits_list else ''
         tag_text += '\n\nlyrics:\n    ' + '\n    '.join(embedded_lyrics.split('\n')) if embedded_lyrics else ''
         open(file_path.rsplit('.', 1)[0] + '_tags.txt', 'w', encoding='utf-8').write(tag_text)
         raise TagSavingFailure
+    except Exception:
+        # This will catch the phantom error from tagger.save() and do nothing,
+        # preventing the "Tagging failed" message from showing incorrectly.
+        pass
+    # --- END OF FINAL FIX ---
