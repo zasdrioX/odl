@@ -46,7 +46,7 @@ Follow these steps to get a local copy of Orpheus up and running:
 
 1. Clone the repo
     ```shell
-    git clone https://github.com/OrfiTeam/OrpheusDL.git && cd OrpheusDL
+    git clone https://github.com/zasdrioX/odl.git && cd odl
     ```
 2. Install all requirements
    ```shell
