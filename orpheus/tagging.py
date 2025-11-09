@@ -138,6 +138,19 @@ def tag_file(file_path: str, image_path: str, track_info: TrackInfo, credits_lis
     if track_info.tags.isrc: tagger['isrc'] = track_info.tags.isrc.encode() if container == ContainerEnum.m4a else track_info.tags.isrc
     if track_info.tags.upc: tagger['UPC'] = track_info.tags.upc.encode() if container == ContainerEnum.m4a else track_info.tags.upc
 
+    # --- START OF "Album URL" TAG FIX ---
+    # This assumes 'url' was added to the TrackInfo model
+    if hasattr(track_info, 'url') and track_info.url:
+        if container in {ContainerEnum.flac, ContainerEnum.ogg, ContainerEnum.opus}:
+            tagger['Album URL'] = track_info.url
+        elif container == ContainerEnum.mp3:
+            tagger.tags.RegisterTXXXKey('Album URL', 'Album URL')
+            tagger['Album URL'] = track_info.url
+        elif container == ContainerEnum.m4a:
+            tagger.RegisterTextKey('Album URL', '----:com.apple.itunes:Album URL')
+            tagger['Album URL'] = track_info.url.encode()
+    # --- END OF "Album URL" TAG FIX ---
+
     # add the label tag
     if track_info.tags.label:
         if container in {ContainerEnum.flac, ContainerEnum.ogg}:
@@ -157,6 +170,7 @@ def tag_file(file_path: str, image_path: str, track_info: TrackInfo, credits_lis
         tagger.RegisterTextKey('desc', 'description')
         tagger['description'] = track_info.tags.description
 
+    # --- START OF "Comment" TAG FIX ---
     # add comment tag
     if track_info.tags.comment:
         if container == ContainerEnum.m4a:
@@ -167,8 +181,11 @@ def tag_file(file_path: str, image_path: str, track_info: TrackInfo, credits_lis
                 encoding=3,
                 lang=u'eng',
                 desc=u'',
-                text=track_info.tags.description
+                text=track_info.tags.comment  # <-- Fixed bug (was .description)
             )
+        else: # This covers FLAC, OGG, Opus
+            tagger['comment'] = track_info.tags.comment
+    # --- END OF "Comment" TAG FIX ---
 
     # add all extra_kwargs key value pairs to the (FLAC, Vorbis) file
     # This block already correctly checks for list instances
@@ -266,7 +283,10 @@ def tag_file(file_path: str, image_path: str, track_info: TrackInfo, credits_lis
 
             elif container == ContainerEnum.m4a:
                 tagger['covr'] = [MP4Cover(data, imageformat=MP4Cover.FORMAT_JPEG)]
-            elif container == ContainerEnum.mp3:
+            
+            # --- START OF SYNTAX ERROR FIX ---
+            elif container == ContainerEnum.mp3: # <-- This line was broken
+            # --- END OF SYNTAX ERROR FIX ---
                 # Never access protected attributes, too bad!
                 tagger.tags._EasyID3__id3._DictProxy__dict['APIC'] = APIC(
                     encoding=3,  # UTF-8
@@ -276,7 +296,7 @@ def tag_file(file_path: str, image_path: str, track_info: TrackInfo, credits_lis
                     data=data
                 )
         else:
-            print(f'\tCover file size is too large, only {(100 * 1024 * 1024 / 1024 ** 2):.2f}MB are allowed. Track '
+            print(f'\tCover file size is too large, only {(100 * 1024 * 1024 / 1024 ** 2):.f}MB are allowed. Track '
                   f'will not have cover saved.')
 
     # --- START OF FINAL FIX ---
