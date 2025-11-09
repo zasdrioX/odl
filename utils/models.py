@@ -330,6 +330,7 @@ class PlaylistInfo:
 
 @dataclass
 class TrackInfo:
+    # --- Fields without default values ---
     name: str
     album: str
     album_id: str
@@ -338,6 +339,9 @@ class TrackInfo:
     codec: CodecEnum
     cover_url: str
     release_year: int
+    
+    # --- Fields with default values (to fix the error) ---
+    url: Optional[str] = None  # <-- ★★★ URL FIX IS HERE (in the correct order) ★★★
     duration: Optional[int] = None  # Duration in whole seconds
     explicit: Optional[bool] = None
     artist_id: Optional[str] = None
