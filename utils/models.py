@@ -323,6 +323,7 @@ class PlaylistInfo:
     creator_id: Optional[str] = None
     cover_url: Optional[str] = None
     cover_type: Optional[ImageFileTypeEnum] = ImageFileTypeEnum.jpg
+    all_track_cover_jpg_url: Optional[str] = None  # <-- ★★★ ADDED THIS FIELD ★★★
     animated_cover_url: Optional[str] = None
     description: Optional[str] = None
     track_extra_kwargs: Optional[dict] = field(default_factory=dict)
@@ -341,7 +342,7 @@ class TrackInfo:
     release_year: int
     
     # --- Fields with default values (to fix the error) ---
-    url: Optional[str] = None  # <-- ★★★ URL FIX IS HERE (in the correct order) ★★★
+    url: Optional[str] = None 
     duration: Optional[int] = None  # Duration in whole seconds
     explicit: Optional[bool] = None
     artist_id: Optional[str] = None
