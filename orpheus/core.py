@@ -251,14 +251,35 @@ class Orpheus:
             if setting_type in old_settings['global']:
                 global_settings[setting_type] = {}
                 for setting in self.default_global_settings[setting_type]:
-                    # Also check if the type is identical
-                    if (setting in old_settings['global'][setting_type] and
-                            isinstance(self.default_global_settings[setting_type][setting],
-                                       type(old_settings['global'][setting_type][setting]))):
-                        global_settings[setting_type][setting] = old_settings['global'][setting_type][setting]
-                    else:
-                        global_settings[setting_type][setting] = self.default_global_settings[setting_type][setting]
+                    
+                    # --- START OF "DEFAULT" RESOLUTION FIX ---
+                    default_value = self.default_global_settings[setting_type][setting]
+                    
+                    if setting in old_settings['global'][setting_type]:
+                        user_value = old_settings['global'][setting_type][setting]
+                        
+                        # Define special check for resolution settings
+                        if (setting_type == 'covers' and setting in {"main_resolution", "external_resolution"}):
+                            # For resolution, allow 'default' or an integer
+                            if isinstance(user_value, int) or user_value == "default":
+                                global_settings[setting_type][setting] = user_value
+                            else: # Invalid value, reset to default
+                                global_settings[setting_type][setting] = default_value
+                                new_setting_detected = True
+                        
+                        # Original type check for all other settings
+                        elif isinstance(user_value, type(default_value)):
+                            global_settings[setting_type][setting] = user_value
+                        
+                        else: # Mismatched type, reset to default
+                            global_settings[setting_type][setting] = default_value
+                            new_setting_detected = True
+                    
+                    else: # Setting not in user's file, add from default
+                        global_settings[setting_type][setting] = default_value
                         new_setting_detected = True
+                    # --- END OF "DEFAULT" RESOLUTION FIX ---
+
             else:
                 global_settings[setting_type] = self.default_global_settings[setting_type]
                 new_setting_detected = True
