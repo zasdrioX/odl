@@ -85,7 +85,10 @@ class Downloader:
         
         if playlist_info.cover_url:
             self.print('Downloading playlist cover')
-            download_file(playlist_info.cover_url, f'{playlist_path}cover.{playlist_info.cover_type.name}', artwork_settings=self._get_artwork_settings())
+            # --- START OF FIX (Use external_format from settings) ---
+            cover_filename = f'{playlist_path}cover.{self.global_settings["covers"]["external_format"]}'
+            download_file(playlist_info.cover_url, cover_filename, artwork_settings=self._get_artwork_settings(is_external=True))
+            # --- END OF FIX ---
         
         if playlist_info.animated_cover_url and self.global_settings['covers']['save_animated_cover']:
             self.print('Downloading animated playlist cover')
@@ -110,6 +113,20 @@ class Downloader:
             if self.global_settings['playlist']['extended_m3u']:
                 with open(m3u_playlist_path, 'a', encoding='utf-8') as f:
                     f.write('#EXTM3U\n\n')
+
+        # --- START OF PLAYLIST COVER FIX (Download Once) ---
+        cover_temp_location = ''
+        # Use all_track_cover_jpg_url if available
+        cover_url_to_download = getattr(playlist_info, 'all_track_cover_jpg_url', playlist_info.cover_url)
+        
+        if cover_url_to_download and self.global_settings['covers']['embed_cover']:
+            self.print('Downloading and processing cover for embedding')
+            cover_temp_location = create_temp_filename()
+            artwork_settings = self._get_artwork_settings(is_external=False) 
+            download_file(cover_url_to_download, cover_temp_location, artwork_settings=artwork_settings)
+        elif cover_url_to_download: # Still download if not embedding, for "delete_cover" logic
+            cover_temp_location = download_to_temp(cover_url_to_download)
+        # --- END OF PLAYLIST COVER FIX ---
 
         tracks_errored = set()
         if custom_module:
@@ -136,14 +153,16 @@ class Downloader:
                 track_id_new = results[0].result_id if len(results) else None
                 
                 if track_id_new:
-                    self.download_track(track_id_new, album_location=playlist_path, track_index=index, number_of_tracks=number_of_tracks, indent_level=2, m3u_playlist=m3u_playlist_path, extra_kwargs=results[0].extra_kwargs)
+                    # --- Pass cover_temp_location ---
+                    self.download_track(track_id_new, album_location=playlist_path, track_index=index, number_of_tracks=number_of_tracks, indent_level=2, m3u_playlist=m3u_playlist_path, cover_temp_location=cover_temp_location, extra_kwargs=results[0].extra_kwargs)
                 else:
                     tracks_errored.add(f'{track_info.name} - {track_info.artists[0]}')
                     if ModuleModes.download in self.module_settings[original_service].module_supported_modes:
                         self.service = self.loaded_modules[original_service]
                         self.service_name = original_service
                         self.print(f'Track {track_info.name} not found, using the original service as a fallback', drop_level=1)
-                        self.download_track(track_id, album_location=playlist_path, track_index=index, number_of_tracks=number_of_tracks, indent_level=2, m3u_playlist=m3u_playlist_path, extra_kwargs=playlist_info.track_extra_kwargs)
+                        # --- Pass cover_temp_location ---
+                        self.download_track(track_id, album_location=playlist_path, track_index=index, number_of_tracks=number_of_tracks, indent_level=2, m3u_playlist=m3u_playlist_path, cover_temp_location=cover_temp_location, extra_kwargs=playlist_info.track_extra_kwargs)
                     else:
                         self.print(f'Track {track_info.name} not found, skipping')
         else:
@@ -151,7 +170,11 @@ class Downloader:
                 self.set_indent_number(2)
                 print()
                 self.print(f'Track {index}/{number_of_tracks}', drop_level=1)
-                self.download_track(track_id, album_location=playlist_path, track_index=index, number_of_tracks=number_of_tracks, indent_level=2, m3u_playlist=m3u_playlist_path, extra_kwargs=playlist_info.track_extra_kwargs)
+                # --- Pass cover_temp_location ---
+                self.download_track(track_id, album_location=playlist_path, track_index=index, number_of_tracks=number_of_tracks, indent_level=2, m3u_playlist=m3u_playlist_path, cover_temp_location=cover_temp_location, extra_kwargs=playlist_info.track_extra_kwargs)
+
+        # --- Delete temp cover ---
+        if cover_temp_location: silentremove(cover_temp_location)
 
         self.set_indent_number(1)
         self.print(f'=== Playlist {playlist_info.name} downloaded ===', drop_level=1)
@@ -191,7 +214,10 @@ class Downloader:
     def _download_album_files(self, album_path: str, album_info: AlbumInfo):
         if album_info.cover_url:
             self.print('Downloading album cover')
-            download_file(album_info.cover_url, f'{album_path}cover.{album_info.cover_type.name}', artwork_settings=self._get_artwork_settings())
+            # --- START OF FIX (Use external_format and pass is_external=True) ---
+            cover_filename = f'{album_path}cover.{self.global_settings["covers"]["external_format"]}'
+            download_file(album_info.cover_url, cover_filename, artwork_settings=self._get_artwork_settings(is_external=True))
+            # --- END OF FIX ---
 
         if album_info.animated_cover_url and self.global_settings['covers']['save_animated_cover']:
             self.print('Downloading animated album cover')
@@ -230,7 +256,18 @@ class Downloader:
                 self.print('Downloading booklet')
                 download_file(album_info.booklet_url, album_path + 'Booklet.pdf')
             
-            cover_temp_location = download_to_temp(album_info.all_track_cover_jpg_url) if album_info.all_track_cover_jpg_url else ''
+            # --- START OF EMBED COVER FIX (Album) ---
+            cover_temp_location = ''
+            if album_info.all_track_cover_jpg_url and self.global_settings['covers']['embed_cover']:
+                self.print('Downloading and processing cover for embedding')
+                cover_temp_location = create_temp_filename()
+                # Get the settings for the MAIN (embedded) cover
+                artwork_settings = self._get_artwork_settings(is_external=False) 
+                # Download and process the cover
+                download_file(album_info.all_track_cover_jpg_url, cover_temp_location, artwork_settings=artwork_settings)
+            elif album_info.all_track_cover_jpg_url: # Still download if not embedding, for "delete_cover" logic
+                cover_temp_location = download_to_temp(album_info.all_track_cover_jpg_url)
+            # --- END OF EMBED COVER FIX (Album) ---
 
             # Download booklet, animated album cover and album cover if present
             self._download_album_files(album_path, album_info)
@@ -307,9 +344,21 @@ class Downloader:
 
         # Separate copy of tags for formatting purposes
         zfill_enabled, zfill_list = self.global_settings['formatting']['enable_zfill'], ['track_number', 'total_tracks', 'disc_number', 'total_discs']
-        track_tags = {k: (zfill_lambda(v) if zfill_enabled and k in zfill_list else sanitise_name(v)) for k, v in {**asdict(track_info.tags), **asdict(track_info)}.items()}
+        
+        # --- START OF ARTIST FILENAME FIX ---
+        # First, process all tags, but exclude 'artists' (which is a list) from sanitise_name
+        track_tags_raw = {**asdict(track_info.tags), **asdict(track_info)}
+        track_tags = {}
+        
+        for k, v in track_tags_raw.items():
+            if k not in ['artists', 'genres']: # Skip lists
+                track_tags[k] = zfill_lambda(v) if zfill_enabled and k in zfill_list else sanitise_name(str(v))
+
+        # Now, manually add the '{artist}' tag by joining the list
+        track_tags['artist'] = sanitise_name(", ".join(track_info.artists))
+        # --- END OF ARTIST FILENAME FIX ---
+
         track_tags['explicit'] = ' [E]' if track_info.explicit else ''
-        track_tags['artist'] = sanitise_name(track_info.artists[0])  # if len(track_info.artists) == 1 else 'Various Artists'
         codec = track_info.codec
 
         self.set_indent_number(indent_level)
@@ -449,7 +498,16 @@ class Downloader:
                             silentremove(default_temp)
                             if self.global_settings['covers']['save_external']:
                                 ext_cover_info: CoverInfo = cover_module.get_track_cover(r.result_id, ext_cover_options, **r.extra_kwargs)
-                                download_file(ext_cover_info.url, f'{track_location_name}.{ext_cover_info.file_type.name}', artwork_settings=self._get_artwork_settings(covers_module_name, is_external=True))
+                                
+                                # --- START OF "DEFAULT" FORMAT FIX (Track) ---
+                                if self.global_settings['covers']['external_resolution'] == "default":
+                                    file_extension = ext_cover_info.file_type.name
+                                else:
+                                    file_extension = self.global_settings["covers"]["external_format"]
+                                
+                                file_location = f'{track_location_name}.{file_extension}'
+                                download_file(ext_cover_info.url, file_location, artwork_settings=self._get_artwork_settings(covers_module_name, is_external=True))
+                                # --- END OF "DEFAULT" FORMAT FIX ---
                             break
                 else:
                     self.print('Third-party module could not find cover, using fallback')
@@ -458,7 +516,16 @@ class Downloader:
                 download_file(track_info.cover_url, cover_temp_location, artwork_settings=self._get_artwork_settings())
                 if self.global_settings['covers']['save_external'] and ModuleModes.covers in self.module_settings[self.service_name].module_supported_modes:
                     ext_cover_info: CoverInfo = self.service.get_track_cover(track_id, ext_cover_options, **track_info.cover_extra_kwargs)
-                    download_file(ext_cover_info.url, f'{track_location_name}.{ext_cover_info.file_type.name}', artwork_settings=self._get_artwork_settings(is_external=True))
+                    
+                    # --- START OF "DEFAULT" FORMAT FIX (Track) ---
+                    if self.global_settings['covers']['external_resolution'] == "default":
+                        file_extension = ext_cover_info.file_type.name
+                    else:
+                        file_extension = self.global_settings["covers"]["external_format"]
+                    
+                    file_location = f'{track_location_name}.{file_extension}'
+                    download_file(ext_cover_info.url, file_location, artwork_settings=self._get_artwork_settings(is_external=True))
+                    # --- END OF "DEFAULT" FORMAT FIX ---
 
         if track_info.animated_cover_url and self.global_settings['covers']['save_animated_cover']:
             self.print('Downloading animated cover')
